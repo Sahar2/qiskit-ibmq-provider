@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2018, IBM.
+# This code is part of Qiskit.
 #
-# This source code is licensed under the Apache License, Version 2.0 found in
-# the LICENSE.txt file in the root directory of this source tree.
+# (C) Copyright IBM 2017, 2018.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
 
 """Utilities for IBM Q API connector."""
 
@@ -123,8 +130,7 @@ class Credentials:
 
             if error_message:
                 raise CredentialsError('error during login: %s' % error_message)
-            else:
-                raise CredentialsError('invalid token')
+            raise CredentialsError('invalid token')
         try:
             response.raise_for_status()
             self.data_credentials = response.json()
@@ -346,17 +352,24 @@ class Request:
         url = self._sanitize_url(response.url)
 
         if response.status_code != requests.codes.ok:
-            logger.warning('Got a %s code response to %s: %s',
-                           response.status_code,
-                           url,
-                           response.text)
+            if 'QCircuitApiModels' in url:
+                # Reduce verbosity for Circuits invocation.
+                # TODO: reenable once the API is more stable.
+                logger.debug('Got a %s code response to %s: %s',
+                             response.status_code,
+                             url,
+                             response.text)
+            else:
+                logger.warning('Got a %s code response to %s: %s',
+                               response.status_code,
+                               url,
+                               response.text)
             if response.status_code in self.errors_not_retry:
                 raise ApiError(usr_msg='Got a {} code response to {}: {}'.format(
                     response.status_code,
                     url,
                     response.text))
-            else:
-                return self._parse_response(response)
+            return self._parse_response(response)
         try:
             if str(response.headers['content-type']).startswith("text/html;"):
                 self.result = response.text

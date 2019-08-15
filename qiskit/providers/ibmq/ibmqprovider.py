@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2018, IBM.
+# This code is part of Qiskit.
 #
-# This source code is licensed under the Apache License, Version 2.0 found in
-# the LICENSE.txt file in the root directory of this source tree.
+# (C) Copyright IBM 2017, 2018.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
 
 """Provider for remote IBMQ backends with admin features."""
 
@@ -13,10 +20,11 @@ from collections import OrderedDict
 from qiskit.providers import BaseProvider
 
 from .credentials.configrc import remove_credentials
-from .credentials import (Credentials,
-                          read_credentials_from_qiskitrc, store_credentials, discover_credentials)
+from .credentials import (Credentials, read_credentials_from_qiskitrc,
+                          store_credentials, discover_credentials)
 from .exceptions import IBMQAccountError
 from .ibmqsingleprovider import IBMQSingleProvider
+
 
 QE_URL = 'https://quantumexperience.ng.bluemix.net/api'
 
@@ -248,6 +256,7 @@ class IBMQProvider(BaseProvider):
             warnings.warn('Credentials are already in use.')
 
         single_provider = IBMQSingleProvider(credentials, self)
+
         self._accounts[credentials.unique_id()] = single_provider
 
         return single_provider

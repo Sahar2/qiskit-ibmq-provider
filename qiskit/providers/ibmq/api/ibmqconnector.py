@@ -1,26 +1,35 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2018, IBM.
+# This code is part of Qiskit.
 #
-# This source code is licensed under the Apache License, Version 2.0 found in
-# the LICENSE.txt file in the root directory of this source tree.
+# (C) Copyright IBM 2017, 2018.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
 
 """IBM Q API connector."""
 
 import json
 import logging
+import re
 
+from ..apiconstants import ApiJobStatus
 from .exceptions import CredentialsError, BadBackendError
 from .utils import Request
 
 logger = logging.getLogger(__name__)
 
 
-def get_job_url(config, hub=None, group=None, project=None):
+def get_job_url(config):
     """Return the URL for a job."""
-    hub = config.get('hub', hub)
-    group = config.get('group', group)
-    project = config.get('project', project)
+    hub = config.get('hub', None)
+    group = config.get('group', None)
+    project = config.get('project', None)
 
     if hub and group and project:
         return '/Network/{}/Groups/{}/Projects/{}/jobs'.format(hub, group,
@@ -28,20 +37,33 @@ def get_job_url(config, hub=None, group=None, project=None):
     return '/Jobs'
 
 
-def get_backend_properties_url(config, backend_type, hub=None):
+def get_backend_properties_url(config, backend_type):
     """Return the URL for a backend's properties."""
-    hub = config.get('hub', hub)
+    hub = config.get('hub', None)
 
     if hub:
         return '/Network/{}/devices/{}/properties'.format(hub, backend_type)
     return '/Backends/{}/properties'.format(backend_type)
 
 
-def get_backends_url(config, hub, group, project):
+def get_backend_defaults_url(config, backend_type):
+    """Return the URL for a backend's pulse defaults."""
+    hub = config.get('hub', None)
+    group = config.get('group', None)
+    project = config.get('project', None)
+
+    if hub and group and project:
+        return '/Network/{}/Groups/{}/Projects/{}/devices/{}/defaults'.format(
+            hub, group, project, backend_type)
+
+    return '/Backends/{}/defaults'.format(backend_type)
+
+
+def get_backends_url(config):
     """Return the URL for a backend."""
-    hub = config.get('hub', hub)
-    group = config.get('group', group)
-    project = config.get('project', project)
+    hub = config.get('hub', None)
+    group = config.get('group', None)
+    project = config.get('project', None)
 
     if hub and group and project:
         return '/Network/{}/Groups/{}/Projects/{}/devices/v/1'.format(hub, group,
@@ -54,12 +76,13 @@ class IBMQConnector:
 
     This class exposes a Python API for making requests to the IBMQ platform.
     """
+
     def __init__(self, token=None, config=None, verify=True):
         """ If verify is set to false, ignore SSL certificate errors """
         self.config = config
 
         if self.config and ('url' in self.config):
-            url_parsed = self.config['url'].split('/api')
+            url_parsed = re.compile(r'(?<!\/)\/api').split(self.config['url'])
             if len(url_parsed) == 2:
                 hub = group = project = None
                 project_parse = url_parsed[1].split('/Projects/')
@@ -81,13 +104,11 @@ class IBMQConnector:
 
     def _check_backend(self, backend_name):
         """Check if the name of a backend is valid to run in QX Platform."""
-        backend_name = backend_name.lower()
-
-        # Check for new-style backends
         backends = self.available_backends()
         for backend_ in backends:
             if backend_.get('backend_name', '') == backend_name:
                 return backend_name
+
         # backend unrecognized
         return None
 
@@ -95,18 +116,12 @@ class IBMQConnector:
         """Check if the user has permission in QX platform."""
         return bool(self.req.credential.get_token())
 
-    def run_job(self, qobj, backend_name, hub=None, group=None, project=None,
-                access_token=None, user_id=None):
+    def submit_job(self, qobj_dict, backend_name):
         """Run a Qobj in a IBMQ backend.
 
         Args:
-            qobj (dict): Qobj to be run, in dictionary form.
+            qobj_dict (dict): Qobj to be run, in dictionary form.
             backend_name (str): backend name.
-            hub (str or None): IBMQ user hub.
-            group (str or None): IBMQ user group.
-            project (str or None): IBMQ user project.
-            access_token (str): IBMQ user access token.
-            user_id (str): IBMQ user id.
 
         Raises:
             BadBackendError: if the backend name is not valid.
@@ -114,10 +129,6 @@ class IBMQConnector:
         Returns:
             dict: API response.
         """
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
         if not self.check_credentials():
             return {"error": "Not credentials valid"}
 
@@ -126,17 +137,15 @@ class IBMQConnector:
         if not backend_type:
             raise BadBackendError(backend_name)
 
-        data = {'qObject': qobj,
+        data = {'qObject': qobj_dict,
                 'backend': {'name': backend_type}}
 
-        url = get_job_url(self.config, hub, group, project)
+        url = get_job_url(self.config)
         job = self.req.post(url, data=json.dumps(data))
 
         return job
 
-    def get_job(self, id_job, hub=None, group=None, project=None,
-                exclude_fields=None, include_fields=None,
-                access_token=None, user_id=None):
+    def get_job(self, id_job, exclude_fields=None, include_fields=None):
         """Get the information about a job, by its id."""
 
         def build_url_filter(excluded_fields, included_fields):
@@ -158,10 +167,6 @@ class IBMQConnector:
                 return '&filter=' + json.dumps({'fields': fields_bool})
             return ''
 
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
         if not self.check_credentials():
             return {'status': 'Error',
                     'error': 'Not credentials valid'}
@@ -169,7 +174,7 @@ class IBMQConnector:
             return {'status': 'Error',
                     'error': 'Job ID not specified'}
 
-        url = get_job_url(self.config, hub, group, project)
+        url = get_job_url(self.config)
 
         url += '/' + id_job
 
@@ -179,11 +184,10 @@ class IBMQConnector:
         if 'calibration' in job:
             job['properties'] = job.pop('calibration')
 
-        if 'qObjectResult' in job:
-            # If the job is using Qobj, return the qObjectResult directly,
-            # which should contain a valid Result.
-            return job
-        elif 'qasms' in job:
+        # The "kind" field indicates the type of the job (empty for qasm jobs)
+        job_type = job.get('kind', '')
+
+        if (not job_type) and ('qasms' in job):
             # Fallback for pre-Qobj jobs.
             for qasm in job['qasms']:
                 if ('result' in qasm) and ('data' in qasm['result']):
@@ -196,19 +200,14 @@ class IBMQConnector:
         return job
 
     def get_jobs(self, limit=10, skip=0, backend=None, only_completed=False,
-                 filter=None, hub=None, group=None, project=None,
-                 access_token=None, user_id=None):
+                 filter=None):
         """Get the information about the user jobs."""
         # pylint: disable=redefined-builtin
 
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
         if not self.check_credentials():
             return {"error": "Not credentials valid"}
 
-        url = get_job_url(self.config, hub, group, project)
+        url = get_job_url(self.config)
         url_filter = '&filter='
         query = {
             "order": "creationDate DESC",
@@ -222,7 +221,7 @@ class IBMQConnector:
             if backend is not None:
                 query['where']['backend.name'] = backend
             if only_completed:
-                query['where']['status'] = 'COMPLETED'
+                query['where']['status'] = ApiJobStatus.COMPLETED.value
 
         url_filter = url_filter + json.dumps(query)
         jobs = self.req.get(url, url_filter)
@@ -232,13 +231,8 @@ class IBMQConnector:
 
         return jobs
 
-    def get_status_job(self, id_job, hub=None, group=None, project=None,
-                       access_token=None, user_id=None):
+    def get_status_job(self, id_job):
         """Get the status about a job, by its id."""
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
         if not self.check_credentials():
             return {'status': 'Error',
                     'error': 'Not credentials valid'}
@@ -246,7 +240,7 @@ class IBMQConnector:
             return {'status': 'Error',
                     'error': 'Job ID not specified'}
 
-        url = get_job_url(self.config, hub, group, project)
+        url = get_job_url(self.config)
 
         url += '/' + id_job + '/status'
 
@@ -254,20 +248,13 @@ class IBMQConnector:
 
         return status
 
-    def get_status_jobs(self, limit=10, skip=0, backend=None, filter=None,
-                        hub=None, group=None, project=None, access_token=None,
-                        user_id=None):
+    def get_status_jobs(self, limit=10, skip=0, backend=None, filter=None):
         """Get the information about the user jobs."""
         # pylint: disable=redefined-builtin
-
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
         if not self.check_credentials():
             return {"error": "Not credentials valid"}
 
-        url = get_job_url(self.config, hub, group, project)
+        url = get_job_url(self.config)
         url_filter = '&filter='
         query = {
             "order": "creationDate DESC",
@@ -289,13 +276,8 @@ class IBMQConnector:
 
         return jobs
 
-    def cancel_job(self, id_job, hub=None, group=None, project=None,
-                   access_token=None, user_id=None):
+    def cancel_job(self, id_job):
         """Cancel the information about a job, by its id."""
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
         if not self.check_credentials():
             return {'status': 'Error',
                     'error': 'Not credentials valid'}
@@ -303,7 +285,7 @@ class IBMQConnector:
             return {'status': 'Error',
                     'error': 'Job ID not specified'}
 
-        url = get_job_url(self.config, hub, group, project)
+        url = get_job_url(self.config)
 
         url += '/{}/cancel'.format(id_job)
 
@@ -311,18 +293,25 @@ class IBMQConnector:
 
         return res
 
-    def backend_status(self, backend, access_token=None, user_id=None):
-        """Get the status of a chip."""
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
+    def job_properties(self, job_id):
+        """Get the backend properties of a job."""
+        if not self.check_credentials():
+            raise CredentialsError('credentials invalid')
+
+        url = get_job_url(self.config)
+        url += '/{}/properties'.format(job_id)
+
+        response = self.req.get(url)
+
+        return response
+
+    def backend_status(self, backend):
+        """Get the status of a backend."""
         backend_type = self._check_backend(backend)
         if not backend_type:
             raise BadBackendError(backend)
 
-        status = self.req.get('/Backends/' + backend_type + '/queue/status',
-                              with_token=False)
+        status = self.req.get('/Backends/' + backend_type + '/queue/status')
         ret = {}
 
         # Adjust fields according to the specs (BackendStatus).
@@ -344,13 +333,8 @@ class IBMQConnector:
 
         return ret
 
-    def backend_properties(self, backend, hub=None, access_token=None,
-                           user_id=None):
-        """Get the parameters of calibration of a real chip."""
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
+    def backend_properties(self, backend):
+        """Get the properties of a backend."""
         if not self.check_credentials():
             raise CredentialsError('credentials invalid')
 
@@ -359,7 +343,7 @@ class IBMQConnector:
         if not backend_type:
             raise BadBackendError(backend)
 
-        url = get_backend_properties_url(self.config, backend_type, hub)
+        url = get_backend_properties_url(self.config, backend_type)
 
         ret = self.req.get(url, params="&version=1")
         if not bool(ret):
@@ -368,17 +352,29 @@ class IBMQConnector:
             ret["backend_name"] = backend_type
         return ret
 
-    def available_backends(self, hub=None, group=None, project=None,
-                           access_token=None, user_id=None):
-        """Get the backends available to use in the QX Platform."""
-        if access_token:
-            self.req.credential.set_token(access_token)
-        if user_id:
-            self.req.credential.set_user_id(user_id)
+    def backend_defaults(self, backend):
+        """Get the pulse defaults of a backend."""
         if not self.check_credentials():
             raise CredentialsError('credentials invalid')
 
-        url = get_backends_url(self.config, hub, group, project)
+        backend_name = self._check_backend(backend)
+
+        if not backend_name:
+            raise BadBackendError(backend)
+
+        url = get_backend_defaults_url(self.config, backend_name)
+
+        ret = self.req.get(url)
+        if not bool(ret):
+            ret = {}
+        return ret
+
+    def available_backends(self):
+        """Get the backends available to use in the IBMQ Platform."""
+        if not self.check_credentials():
+            raise CredentialsError('credentials invalid')
+
+        url = get_backends_url(self.config)
 
         response = self.req.get(url)
         if (response is not None) and (isinstance(response, dict)):
@@ -386,6 +382,105 @@ class IBMQConnector:
 
         return response
 
+    def circuit_run(self, name, **kwargs):
+        """Execute a Circuit.
+
+        Args:
+            name (str): name of the Circuit.
+            **kwargs (dict): arguments for the Circuit.
+
+        Returns:
+            dict: json response.
+
+        Raises:
+            CredentialsError: if the user was not authenticated.
+        """
+        if not self.check_credentials():
+            raise CredentialsError('credentials invalid')
+
+        url = '/QCircuitApiModels'
+
+        payload = {
+            'name': name,
+            'params': kwargs
+        }
+
+        response = self.req.post(url, data=json.dumps(payload))
+
+        return response
+
+    def circuit_job_get(self, job_id):
+        """Return information about a Circuit job.
+
+        Args:
+            job_id (str): the id of the job.
+
+        Returns:
+            dict: job information.
+        """
+        if not self.check_credentials():
+            return {'status': 'Error',
+                    'error': 'Not credentials valid'}
+        if not job_id:
+            return {'status': 'Error',
+                    'error': 'Job ID not specified'}
+
+        # TODO: by API constraints, always use the URL without h/g/p.
+        url = '/Jobs/{}'.format(job_id)
+
+        job = self.req.get(url)
+
+        if 'calibration' in job:
+            job['properties'] = job.pop('calibration')
+
+        if 'qObjectResult' in job:
+            # If the job is using Qobj, return the qObjectResult directly,
+            # which should contain a valid Result.
+            return job
+        elif 'qasms' in job:
+            # Fallback for pre-Qobj jobs.
+            for qasm in job['qasms']:
+                if ('result' in qasm) and ('data' in qasm['result']):
+                    qasm['data'] = qasm['result']['data']
+                    del qasm['result']['data']
+                    for key in qasm['result']:
+                        qasm['data'][key] = qasm['result'][key]
+                    del qasm['result']
+
+        return job
+
+    def circuit_job_status(self, job_id):
+        """Return the status of a Circuits job.
+
+        Args:
+            job_id (str): the id of the job.
+
+        Returns:
+            dict: job status.
+        """
+        if not self.check_credentials():
+            return {'status': 'Error',
+                    'error': 'Not credentials valid'}
+        if not job_id:
+            return {'status': 'Error',
+                    'error': 'Job ID not specified'}
+
+        # TODO: by API constraints, always use the URL without h/g/p.
+        url = '/Jobs/{}/status'.format(job_id)
+
+        status = self.req.get(url)
+
+        return status
+
     def api_version(self):
         """Get the API Version of the QX Platform."""
-        return self.req.get('/version')
+        response = self.req.get('/version')
+
+        # Parse the response, making sure a dict is returned in all cases.
+        if isinstance(response, str):
+            response = {'new_api': False,
+                        'api': response}
+        elif isinstance(response, dict):
+            response['new_api'] = True
+
+        return response

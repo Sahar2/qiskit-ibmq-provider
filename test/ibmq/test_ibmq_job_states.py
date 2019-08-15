@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 
-# Copyright 2018, IBM.
+# This code is part of Qiskit.
 #
-# This source code is licensed under the Apache License, Version 2.0 found in
-# the LICENSE.txt file in the root directory of this source tree.
+# (C) Copyright IBM 2017, 2018.
+#
+# This code is licensed under the Apache License, Version 2.0. You may
+# obtain a copy of this license in the LICENSE.txt file in the root directory
+# of this source tree or at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# Any modifications or derivative works of this code must retain this
+# copyright notice, and modified files need to carry a notice indicating
+# that they have been altered from the originals.
 
 # pylint: disable=missing-docstring
 
@@ -12,13 +19,34 @@
 import time
 from contextlib import suppress
 
+from qiskit.providers.ibmq.apiconstants import API_JOB_FINAL_STATES, ApiJobStatus
 from qiskit.test.mock import new_fake_qobj, FakeRueschlikon
 from qiskit.providers import JobError, JobTimeoutError
 from qiskit.providers.ibmq.api import ApiError
-from qiskit.providers.ibmq.ibmqjob import API_FINAL_STATES, IBMQJob
+from qiskit.providers.ibmq.job.ibmqjob import IBMQJob
 from qiskit.providers.jobstatus import JobStatus
+
 from ..jobtestcase import JobTestCase
 
+
+MOCKED_ERROR_RESULT = {
+    'qObjectResult': {
+        'results': [
+            {
+                'status': 'DONE',
+                'success': True
+            },
+            {
+                'status': 'Error 1',
+                'success': False
+            },
+            {
+                'status': 'Error 2',
+                'success': False
+            }
+        ]
+    }
+}
 
 VALID_QOBJ_RESPONSE = {
     'status': 'COMPLETED',
@@ -197,7 +225,8 @@ class TestIBMQJobStates(JobTestCase):
 
         self._current_api.progress()
         self.assertEqual(job.status(), JobStatus.ERROR)
-        self.assertEqual(job.error_message(), 'Error running job')
+        self.assertIn('Error 1', job.error_message())
+        self.assertIn('Error 2', job.error_message())
 
     def test_cancelled_result(self):
         job = self.run_with_api(CancellableAPI())
@@ -212,7 +241,7 @@ class TestIBMQJobStates(JobTestCase):
     def test_errored_result(self):
         job = self.run_with_api(ThrowingGetJobAPI())
         self.wait_for_initialization(job)
-        with self.assertRaises(JobError):
+        with self.assertRaises(ApiError):
             job.result()
 
     def test_completed_result(self):
@@ -263,12 +292,6 @@ class TestIBMQJobStates(JobTestCase):
         with self.assertRaises(JobTimeoutError):
             job.result(timeout=0.2)
 
-    def test_cancel_while_initializing_fails(self):
-        job = self.run_with_api(CancellableAPI())
-        can_cancel = job.cancel()
-        self.assertFalse(can_cancel)
-        self.assertEqual(job.status(), JobStatus.INITIALIZING)
-
     def test_only_final_states_cause_detailed_request(self):
         from unittest import mock
 
@@ -290,7 +313,7 @@ class TestIBMQJobStates(JobTestCase):
                 with mock.patch.object(self._current_api, 'get_job',
                                        wraps=self._current_api.get_job):
                     job.status()
-                    if status in API_FINAL_STATES:
+                    if ApiJobStatus(status) in API_JOB_FINAL_STATES:
                         self.assertTrue(self._current_api.get_job.called)
                     else:
                         self.assertFalse(self._current_api.get_job.called)
@@ -345,7 +368,7 @@ class BaseFakeAPI:
         return {key: value for key, value in complete_response.items()
                 if key in summary_fields}
 
-    def run_job(self, *_args, **_kwargs):
+    def submit_job(self, *_args, **_kwargs):
         time.sleep(0.2)
         return {'id': 'TEST_ID'}
 
@@ -383,7 +406,7 @@ class ErrorWhileValidatingAPI(BaseFakeAPI):
 
     _job_status = [
         {'status': 'VALIDATING'},
-        {'status': 'ERROR_VALIDATING_JOB'}
+        {'status': 'ERROR_VALIDATING_JOB', **MOCKED_ERROR_RESULT}
     ]
 
 
@@ -402,7 +425,7 @@ class ErrorWhileCreatingAPI(BaseFakeAPI):
     """
 
     _job_status = [
-        {'status': 'ERROR_CREATING_JOB'}
+        {'status': 'ERROR_CREATING_JOB', **MOCKED_ERROR_RESULT}
     ]
 
 
@@ -411,7 +434,7 @@ class ErrorWhileRunningAPI(BaseFakeAPI):
 
     _job_status = [
         {'status': 'RUNNING'},
-        {'status': 'ERROR_RUNNING_JOB', 'error': 'Error running job'}
+        {'status': 'ERROR_RUNNING_JOB', **MOCKED_ERROR_RESULT}
     ]
 
 
@@ -428,14 +451,14 @@ class QueuedAPI(BaseFakeAPI):
 class RejectingJobAPI(BaseFakeAPI):
     """Class for emulating an API unable of initializing."""
 
-    def run_job(self, *_args, **_kwargs):
+    def submit_job(self, *_args, **_kwargs):
         return {'error': 'invalid qobj'}
 
 
 class UnavailableRunAPI(BaseFakeAPI):
     """Class for emulating an API throwing before even initializing."""
 
-    def run_job(self, *_args, **_kwargs):
+    def submit_job(self, *_args, **_kwargs):
         time.sleep(0.2)
         raise ApiError()
 
